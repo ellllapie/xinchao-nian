@@ -49,7 +49,7 @@ class GitHubSync:
         self.path_prefix = path_prefix.strip().strip("/")
 
         self._headers = {
-            "Authorization": f"token {token}",
+            "Authorization": f"Bearer {token}",
             "Accept": "application/vnd.github+json",
             "X-GitHub-Api-Version": "2022-11-28",
         }
