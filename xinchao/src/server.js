@@ -994,9 +994,9 @@ async function handleAwareness(input = {}, now = new Date()) {
     source: 'mcp',
     details: { id, kind: probe.item.kind, ombre: ombreResult ? ombreResult.ok : null },
     at: now,
-  }, (latest) => resolveAwareness(latest, id, action === 'confirm' ? 'confirmed' : 'dismissed', { text: input.text, note: input.note, aspect: input.aspect, ombre：ombreResult }, now).state);
+  }, (latest) => resolveAwareness(latest, id, action === 'confirm' ? 'confirmed' : 'dismissed', { text: input.text, note: input.note, aspect: input.aspect, ombre: ombreResult }, now).state);
   const item = state.awareness.candidates.find((c) => c.id === id);
-  return { action, found: true, id, item, ombre：ombreResult };
+  return { action, found: true, id, item, ombre: ombreResult };
 }
 
 async function saveHandoffNote(note, source = 'mcp', now = new Date()) {
