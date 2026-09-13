@@ -977,7 +977,7 @@ async function handleAwareness(input = {}, now = new Date()) {
   const probe = resolveAwareness(current, id, action === 'confirm' ? 'confirmed' : 'dismissed', {}, now);
   if (!probe.found) return { action, found: false, id };
   if (probe.already) return { action, found: true, already: probe.already, id };
-  let ombre = null;
+  let ombreResult = null;
   if (action === 'confirm' && config.ombre.writeEnabled && !config.shadowMode) {
     const content = String(input.text ?? probe.item.text ?? '').trim();
     const aspect = String(input.aspect ?? probe.item.aspect ?? 'patterns');
