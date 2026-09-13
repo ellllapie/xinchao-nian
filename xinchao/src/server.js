@@ -983,20 +983,20 @@ async function handleAwareness(input = {}, now = new Date()) {
     const aspect = String(input.aspect ?? probe.item.aspect ?? 'patterns');
     try {
       const reply = await ombre.writeSelfAwareness(content, aspect);
-      ombre = { ok: true, aspect, reply: reply.slice(0, 200) };
+      ombreResult = { ok: true, aspect, reply: reply.slice(0, 200) };
     } catch (error) {
-      ombre = { ok: false, aspect, error: String(error.message ?? error).slice(0, 200) };
+      ombreResult = { ok: false, aspect, error: String(error.message ?? error).slice(0, 200) };
       log('awareness_ombre_write_failed', { id, message: error.message });
     }
   }
   const state = await updateState({
     type: action === 'confirm' ? 'awareness_confirm' : 'awareness_dismiss',
     source: 'mcp',
-    details: { id, kind: probe.item.kind, ombre: ombre ? ombre.ok : null },
+    details: { id, kind: probe.item.kind, ombre: ombreResult ? ombreResult.ok : null },
     at: now,
-  }, (latest) => resolveAwareness(latest, id, action === 'confirm' ? 'confirmed' : 'dismissed', { text: input.text, note: input.note, aspect: input.aspect, ombre }, now).state);
+  }, (latest) => resolveAwareness(latest, id, action === 'confirm' ? 'confirmed' : 'dismissed', { text: input.text, note: input.note, aspect: input.aspect, ombre：ombreResult }, now).state);
   const item = state.awareness.candidates.find((c) => c.id === id);
-  return { action, found: true, id, item, ombre };
+  return { action, found: true, id, item, ombre：ombreResult };
 }
 
 async function saveHandoffNote(note, source = 'mcp', now = new Date()) {
