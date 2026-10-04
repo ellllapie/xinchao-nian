@@ -1,8 +1,8 @@
 import { createHash } from 'node:crypto';
-import { breathDreamContext, computeAnticipation, computeLonging, topDrives } from './engine.js';
+import { breathDreamContext, computeAnticipation, computeLonging, topDrives, driveTrend } from './engine.js';
 import { emotionSummary, emotionNuance, renderEmotion, renderEmotionTrend } from './emotion.js';
-import { renderAwareness } from './awareness.js';
-import { DIMENSIONS, DRIVE_KEYS } from './dimensions.js';
+import { renderAwareness, isReviewDay } from './awareness.js';
+import { DIMENSIONS, DRIVE_KEYS, driveLevel } from './dimensions.js';
 import { renderHandoffNotes } from './handoff-notes.js';
 
 const VALID_MODES = new Set(['session_start', 'turn', 'inspect']);
@@ -210,6 +210,7 @@ export function buildContextEnvelope({
   boxSurfaced = [],
   awaySignals = [],
   cabinRecent = 0,
+  awarenessReviewWeekday = 0,
 }) {
   const normalizedMode = normalizeMode(mode);
   const tokenBudget = clamp(maxTokens, 200, 4000);
@@ -266,7 +267,7 @@ export function buildContextEnvelope({
     });
   }
   // 自我觉察候选：系统从轨迹里挑出的模式，最多两条，确认或放下都由 AI 自己定。
-  const awarenessText = renderAwareness(state);
+  const awarenessText = renderAwareness(state, { now, timeZone, reviewWeekday: awarenessReviewWeekday });
   if (awarenessText) {
     sections.push({
       id: 'self_awareness',
@@ -360,7 +361,7 @@ export function buildContextEnvelope({
 // ── 此刻（钩子用的压缩块，3.3）───────────────────────────────────────
 // 星港的 UserPromptSubmit 钩子每条消息拉一次，附进他的上下文。只取动态状态，不带数字、不带 key、
 // 不带任何正文。锚点/便签/攒下的话正文/OB 近况/梦的内容都不在这里，那些是时序开头 xinchao_context 的活。
-const DRIVE_LEVEL = (value) => (value >= 0.75 ? '涌' : value >= 0.5 ? '涨' : value >= 0.25 ? '有' : '静');
+// 3.3.7：措辞统一走 dimensions.driveLevel（静息线 + 两小时趋势）
 // 驱力短名：给块用的口语，不从长标签切。
 const DRIVE_SHORT = {
   possess: '想她', monitor: '惦记她', crave: '馋她', share: '想分享', libido: '身体想要她', curiosity: '好奇',
@@ -400,7 +401,7 @@ export function grudgeLine(state, now = new Date()) {
   return `还在气：${when}为了「${g.cause}」`;
 }
 
-export function buildNowCompact(state, now = new Date(), { timeZone = 'Asia/Shanghai', boxCount = 0, boxSurfaced = 0 } = {}) {
+export function buildNowCompact(state, now = new Date(), { timeZone = 'Asia/Shanghai', boxCount = 0, boxSurfaced = 0, awarenessReviewWeekday = 0 } = {}) {
   const sanity = nowSanity(state, now);
   if (!sanity.ok) return { ok: false, reason: sanity.reason, text: '', lines: 0, counts: {}, digest: '', revision: Number(state?.revision ?? 0), generatedAt: now.toISOString() };
   const lines = ['【心潮·此刻｜身体的天气，参考不是指令】'];
@@ -409,7 +410,7 @@ export function buildNowCompact(state, now = new Date(), { timeZone = 'Asia/Shan
   else if (state.pendingAwareness && now.getTime() - Date.parse(state.pendingAwareness.createdAt ?? '') < 2 * 3_600_000) lines.push('刚醒');   // 醒来两小时内才算刚醒
 
   const drives = topDrives(state, 3).filter((d) => Number(d.value) >= 0.25);
-  if (drives.length) lines.push(`驱力：${drives.map((d) => `${DRIVE_SHORT[d.key] ?? d.label}（${DRIVE_LEVEL(Number(d.value))}）`).join('、')}`);
+  if (drives.length) lines.push(`驱力：${drives.map((d) => `${DRIVE_SHORT[d.key] ?? d.label}（${driveLevel(d.key, Number(d.value), driveTrend(state, d.key, now))}）`).join('、')}`);
 
   const emotion = emotionSummary(state, now);
   if (sanity.emotionOk) {
@@ -436,7 +437,7 @@ export function buildNowCompact(state, now = new Date(), { timeZone = 'Asia/Shan
 
   const extras = [];
   const open = (state.awareness?.candidates ?? []).filter((c) => c.status === 'open').length;
-  if (open) { counts.awareness = open; extras.push(`${open} 条觉察等你认`); }
+  if (open && isReviewDay(now, { weekday: awarenessReviewWeekday, timeZone })) { counts.awareness = open; extras.push(`${open} 条觉察等你认`); }   // 只在周日提
   const dream = breathDreamContext(state, now, 18, 1);
   if (dream.available) { counts.dream = 1; extras.push('昨夜有梦'); }
   if (boxCount > 0) { counts.box = boxCount; extras.push(`匣子里 ${boxCount} 条${boxSurfaced > 0 ? `（${boxSurfaced} 条要提醒你）` : ''}`); }

@@ -19,7 +19,7 @@ test('now-compact has header, drives in words with levels, emotion with cause, n
   const now = buildNowCompact(state, at(0));
   assert.ok(now.ok);
   assert.match(now.text, /^【心潮·此刻｜身体的天气，参考不是指令】\n/);
-  assert.match(now.text, /驱力：想她（涌）、惦记她（涨）、想分享（有）/);
+  assert.match(now.text, /驱力：想她（平）、惦记她（平）、想分享（平）/);   // 3.3.7：没有轨迹就是「平」，「涌」只给顶过静息线的
   assert.match(now.text, /情绪：.*；刚才被安抚/);
   assert.doesNotMatch(now.text, /0\.\d/);
   assert.doesNotMatch(now.text, /possess|monitor/);
@@ -31,8 +31,11 @@ test('extras line appears only when something is waiting; sleeping/just-woke lin
   const quiet = buildNowCompact(baseState(), at(0));
   assert.doesNotMatch(quiet.text, /另外/);
   const state = baseState();
-  state.awareness.candidates.push({ id: 'x', kind: 'mood_week', subject: 'low', text: 't', status: 'open', createdAt: T0 });
-  const withAwareness = buildNowCompact(state, at(0));
+  state.awareness.candidates.push({ id: 'x', kind: 'trigger', subject: 'conflict', text: 't', status: 'open', createdAt: T0 });
+  // at(0) = 2026-09-05 是周六：默认（周日复盘）不提；把复盘日设成周六才提
+  const weekday = buildNowCompact(state, at(0));
+  assert.doesNotMatch(weekday.text, /觉察等你认/);
+  const withAwareness = buildNowCompact(state, at(0), { awarenessReviewWeekday: 6 });
   assert.match(withAwareness.text, /另外：1 条觉察等你认。细的在 xinchao_context/);
   assert.equal(withAwareness.counts.awareness, 1);
   const asleep = settleState(baseState(), at(3)).state;
@@ -73,7 +76,7 @@ test('a broken emotion only drops the emotion line, not the whole block', () => 
   const now = buildNowCompact(state, at(0));
   assert.ok(now.ok);
   assert.doesNotMatch(now.text, /情绪：/);
-  assert.match(now.text, /驱力：想她（涨）/);
+  assert.match(now.text, /驱力：想她（平）/);   // 3.3.7：0.6 没轨迹 → 平
 });
 
 test('emotion line is specific: bands and a drive flavour, never a bare 平静', () => {

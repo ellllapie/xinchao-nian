@@ -3,9 +3,9 @@ import { createHash, randomUUID, timingSafeEqual } from 'node:crypto';
 import { loadConfig, validateConfig } from './config.js';
 import { emotionCoords, emotionSummary, stampEmotionArgs } from './emotion.js';
 import { recordSurfacing, resolveAwareness, scanAwareness, awarenessSummary } from './awareness.js';
-import { detectSelfSignals, renderNowLine } from './self-signals.js';
+import { detectSelfSignals, renderNowLine, SELF_REPORT_TYPES } from './self-signals.js';
 import { BlackBox, renderBoxList } from './black-box.js';
-import { INTERACTION_TYPES, applyDriveFeedback, applyMemoryResonance, applyOmbreHeartbeat, applyOutputReflux, applyLongingNudge, barkAllowed, breathDreamContext, contactIdleAllowed, computeLonging, daytimeEmergenceAllowed, dreamAllowed, newState, pickIntent, proactiveBarkAllowed, recordBark, recordDaytimeEmergence, recordDream, scheduleDaytimeEmergence, settleAndApplyConversationEvent, settleState, topDrives, computeAnticipation, localDayAndHour, applySurfacedThought, surfacedDriveKey } from './engine.js';
+import { INTERACTION_TYPES, applyDriveFeedback, applyMemoryResonance, applyOmbreHeartbeat, applyOutputReflux, applyLongingNudge, barkAllowed, breathDreamContext, contactIdleAllowed, computeLonging, daytimeEmergenceAllowed, dreamAllowed, newState, pickIntent, proactiveBarkAllowed, recordBark, recordDaytimeEmergence, recordDream, scheduleDaytimeEmergence, settleAndApplyConversationEvent, settleState, topDrives, computeAnticipation, localDayAndHour, applySurfacedThought, surfacedDriveKey, recentSurfacedBucketIds, recordSurfacedBuckets } from './engine.js';
 import { buildInteractionBridgeMessage } from './interaction-messages.js';
 import { selectUniqueBark } from './bark-dedupe.js';
 import { StateStore } from './state-store.js';
@@ -213,7 +213,7 @@ async function runCycle() {
     } catch (error) { log('box_reminders_failed', { message: error.message }); }
     // 心潮自身信号（3.3）：检测"发生了什么"，经桥递到窗口。先入队再记状态，入队失败不记（下轮再试）。
     if (config.bridge.enabled && config.bridge.selfSignals) {
-      const preview = detectSelfSignals(state, now, { timeZone: config.settle.timeZone, dawnFreezeStart: config.settle.dawnFreezeStart, dawnFreezeEnd: config.settle.dawnFreezeEnd, longing: { timeZone: config.settle.timeZone, ...config.longing } });
+      const preview = detectSelfSignals(state, now, { timeZone: config.settle.timeZone, dawnFreezeStart: config.settle.dawnFreezeStart, dawnFreezeEnd: config.settle.dawnFreezeEnd, awarenessReviewWeekday: config.awareness.reviewWeekday, longing: { timeZone: config.settle.timeZone, ...config.longing } });
       if (preview.signals.length) {
         let queued = 0;
         for (const signal of preview.signals) {
@@ -230,7 +230,7 @@ async function runCycle() {
           source: 'timer',
           details: { signals: preview.signals.map((s) => `${s.kind}:${s.subject}`) },
           at: now,
-        }, (latest) => detectSelfSignals(latest, now, { timeZone: config.settle.timeZone, dawnFreezeStart: config.settle.dawnFreezeStart, dawnFreezeEnd: config.settle.dawnFreezeEnd, longing: { timeZone: config.settle.timeZone, ...config.longing } }).state);
+        }, (latest) => detectSelfSignals(latest, now, { timeZone: config.settle.timeZone, dawnFreezeStart: config.settle.dawnFreezeStart, dawnFreezeEnd: config.settle.dawnFreezeEnd, awarenessReviewWeekday: config.awareness.reviewWeekday, longing: { timeZone: config.settle.timeZone, ...config.longing } }).state);
         if (preview.signals.length) log('self_signals', { kinds: preview.signals.map((s) => `${s.kind}:${s.subject}`) });
       }
     }
@@ -358,8 +358,12 @@ async function runCycle() {
       let thoughtSourceBucketIds = [];
       if (config.ombre.readEnabled) {
         try {
-          const recalled = await ombre.thoughtMaterialWithRefs(topDrives(state), emotionForOmbre(state));
+          const recalled = await ombre.thoughtMaterialWithRefs(topDrives(state), emotionForOmbre(state), now, recentSurfacedBucketIds(state, now));
           thoughtSourceBucketIds = recalled.bucketIds;
+          if (recalled.bucketIds.length) {
+            state = await updateState({ type: 'surfaced_buckets', source: 'autonomous', details: { count: recalled.bucketIds.length }, at: now },
+              (latest) => recordSurfacedBuckets(latest, recalled.bucketIds, now));
+          }
           thoughtMaterial = await materialFromReferencedBuckets(recalled, 5);
         }
         catch (error) { log('ombre_read_failed', { message: error.message }); }
@@ -447,7 +451,11 @@ async function runCycle() {
     } else if (!config.shadowMode && config.daytime.enabled && config.ombre.readEnabled && (!config.daytime.bark || config.bark.enabled) && daytimeEmergenceAllowed(state, now, config.daytime)) {
       let selected = { message: '', candidate: { source: 'none' }, reason: 'empty', attempts: 1 };
       try {
-        const recalled = await ombre.daytimeMaterialWithRefs(topDrives(state), emotionForOmbre(state));
+        const recalled = await ombre.daytimeMaterialWithRefs(topDrives(state), emotionForOmbre(state), now, recentSurfacedBucketIds(state, now));
+        if (recalled.bucketIds.length) {
+          state = await updateState({ type: 'surfaced_buckets', source: 'daytime', details: { count: recalled.bucketIds.length }, at: now },
+            (latest) => recordSurfacedBuckets(latest, recalled.bucketIds, now));
+        }
         const material = await materialFromReferencedBuckets(recalled, 5);
         if (config.resonance.enabled && material) {
           const domains = parseSurfacedDomains(material);
@@ -796,6 +804,7 @@ async function createContextEnvelope({
   let cabinRecent = 0;
   try { cabinRecent = (await cabin.unlockedUserNotes()).filter((n) => now.getTime() - Date.parse(n.createdAt) < 24 * 3_600_000).length; } catch { cabinRecent = 0; }
   const envelope = buildContextEnvelope({
+    awarenessReviewWeekday: config.awareness.reviewWeekday,
     state,
     sessionId,
     mode,
@@ -869,7 +878,7 @@ async function classifyExchange(event, source = 'api') {
   if (event.interactionType || !exchange || !config.model.enabled) return null;
   const snapshot = await store.read();
   const lastAt = Date.parse(snapshot.interactionClassifyAt ?? '');
-  if (Number.isFinite(lastAt) && Date.now() - lastAt < 8 * 60_000) return { skipped: 'throttled' };
+  if (Number.isFinite(lastAt) && Date.now() - lastAt < (config.interaction?.classifyMinMinutes ?? 8) * 60_000) return { skipped: 'throttled' };
   try {
     const tag = await model.classifyInteraction(exchange);
     if (!tag) return null;
@@ -977,17 +986,13 @@ async function handleAwareness(input = {}, now = new Date()) {
   const probe = resolveAwareness(current, id, action === 'confirm' ? 'confirmed' : 'dismissed', {}, now);
   if (!probe.found) return { action, found: false, id };
   if (probe.already) return { action, found: true, already: probe.already, id };
+  // 注意：这里不能叫 ombre——文件顶部的 OB 客户端就叫 ombre，之前被局部变量遮住，确认从来没写进过 OB（2026-09-05 → 09-09）
+  // 3.3.3：只有他自己写的那句才进 OB；不带 text 的确认只在心潮记一笔（候选模板原文永远不进 OB）
   let ombreResult = null;
-  if (action === 'confirm' && config.ombre.writeEnabled && !config.shadowMode) {
-    const content = String(input.text ?? probe.item.text ?? '').trim();
+  const ownWords = String(input.text ?? '').trim();
+  if (action === 'confirm' && ownWords && config.ombre.writeEnabled && !config.shadowMode) {
     const aspect = String(input.aspect ?? probe.item.aspect ?? 'patterns');
-    try {
-      const reply = await ombre.writeSelfAwareness(content, aspect);
-      ombreResult = { ok: true, aspect, reply: reply.slice(0, 200) };
-    } catch (error) {
-      ombreResult = { ok: false, aspect, error: String(error.message ?? error).slice(0, 200) };
-      log('awareness_ombre_write_failed', { id, message: error.message });
-    }
+    ombreResult = await writeAwarenessToOmbre(id, ownWords, aspect);
   }
   const state = await updateState({
     type: action === 'confirm' ? 'awareness_confirm' : 'awareness_dismiss',
@@ -997,6 +1002,16 @@ async function handleAwareness(input = {}, now = new Date()) {
   }, (latest) => resolveAwareness(latest, id, action === 'confirm' ? 'confirmed' : 'dismissed', { text: input.text, note: input.note, aspect: input.aspect, ombre: ombreResult }, now).state);
   const item = state.awareness.candidates.find((c) => c.id === id);
   return { action, found: true, id, item, ombre: ombreResult };
+}
+
+async function writeAwarenessToOmbre(id, content, aspect) {
+  try {
+    const reply = await ombre.writeSelfAwareness(content, aspect);
+    return { ok: true, aspect, reply: String(reply ?? '').slice(0, 200) };
+  } catch (error) {
+    log('awareness_ombre_write_failed', { id, message: error.message });
+    return { ok: false, aspect, error: String(error.message ?? error).slice(0, 200) };
+  }
 }
 
 async function saveHandoffNote(note, source = 'mcp', now = new Date()) {
@@ -1325,8 +1340,19 @@ const server = createServer(async (request, response) => {
           return createContextEnvelope(args);
         },
         event: async (event) => {
+          // 硬门：他自己在窗口里直接填的类型，只认"自己动一下就能落"的四种；关系类要有她的话（exchange）为证
+          const declared = String(event.interactionType ?? event.interaction_type ?? '').trim().toLowerCase();
+          let gated = null;
+          if (config.interaction.mcpSelfReportGate && declared && !SELF_REPORT_TYPES.has(declared) && !String(event.exchange ?? '').trim()) {
+            gated = declared;
+            event.interactionType = ''; delete event.interaction_type;
+          }
           await classifyExchange(event, 'mcp');
           const result = await recordConversationEvent(event, 'mcp');
+          if (gated) {
+            result.interaction = { type: gated, applied: false, reasonCode: 'needs_her', affectedDrives: [] };
+            log('interaction_self_report_gated', { type: gated });
+          }
           return {
             revision: result.revision,
             consciousness: result.consciousness,
@@ -1408,7 +1434,7 @@ const server = createServer(async (request, response) => {
       const state = await store.read();
       let boxCount = 0; let boxSurfaced = 0;
       try { boxCount = await blackBox.count(new Date()); boxSurfaced = (await blackBox.surfaced(new Date())).length; } catch { boxCount = 0; }
-      return send(response, 200, buildNowCompact(state, new Date(), { timeZone: config.settle.timeZone, boxCount, boxSurfaced }));
+      return send(response, 200, buildNowCompact(state, new Date(), { timeZone: config.settle.timeZone, boxCount, boxSurfaced, awarenessReviewWeekday: config.awareness.reviewWeekday }));
     }
     if (request.method === 'GET' && url.pathname === '/v1/context') {
       if (!config.context.enabled) return send(response, 503, { error: 'context envelope disabled' });

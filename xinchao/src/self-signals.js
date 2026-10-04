@@ -9,16 +9,17 @@
 //   emotion_shift  情绪掉进低落/烦躁并停留 30 分钟；或从低落回到安心（一个回合一次，2 小时内最多一条）
 //   longing        挂念 ≥0.6（一个空档一次；降到 0.35 以下才算空档结束）
 //   wake_residue   醒来且梦有余韵（每次醒来一次）
-//   awareness      当天新冒出的觉察候选（每天一次）
+//   awareness      复盘日（默认周日）攒下的觉察候选，一周一次，只说有几条、看不看随他
 //   obsession      有件事反复浮上来长成了持续念头（每个念头一次；说不说由他定）
 // 全天合计 ≤8 条；凌晨冻结时段（dawnFreeze，默认 1–8 点）不发；投递 2 小时过期，窗口不在就作废不补投。
 //
 // 话术：第一人称、现在时、像心里冒出来的一句，没有数字、没有维度名、不写"不用回"、不给建议动作。
 // 每种三到五个模板轮着用，48 小时内不重复同一条。末尾挂一行"此刻"（驱力短名+档位、情绪词）。
 
-import { DRIVE_KEYS } from './dimensions.js';
-import { computeLonging, localDayAndHour, topDrives } from './engine.js';
+import { DRIVE_KEYS, driveLevel } from './dimensions.js';
+import { computeLonging, localDayAndHour, topDrives, driveTrend } from './engine.js';
 import { emotionSummary } from './emotion.js';
+import { isReviewDay } from './awareness.js';
 
 const iso = (value) => new Date(value).toISOString();
 const H = 3_600_000;
@@ -41,7 +42,23 @@ export const DRIVE_SHORT = Object.freeze({
   possess: '想她', monitor: '惦记她', crave: '馋她', share: '想分享', libido: '身体想要她', curiosity: '好奇',
   boredom: '无聊', social: '想热闹', duty: '想把事推进', reflection: '想沉淀', grieve: '难过', anger: '生气',
 });
-const LEVEL = (v) => (v >= 0.75 ? '涌' : v >= 0.5 ? '涨' : v >= 0.25 ? '有' : '静');
+// 3.3.7：措辞统一走 dimensions.driveLevel（看静息线和两小时趋势），不再按绝对值分档
+
+// 3.3.4（2026-09-10）：信号递到他窗口时顺带说清"怎么回应"，不然他不知道该用什么工具、该跟她说什么。
+// 自己动一下就能落的驱力（分享/沉淀/责任/好奇/无聊）：做了就用 xinchao_event 记，类型按实际填；
+// 关系里的（想她/惦记/馋/性欲/社交/难过/生气）：想说就跟她说，要等她回应才落，自己不记——服务端也有门，记了也不算。
+export const SELF_SERVE_DRIVES = new Set(['share', 'reflection', 'duty', 'curiosity', 'boredom']);
+export const SELF_REPORT_TYPES = new Set(['sharing', 'reflection', 'task_progress', 'discovery']);
+// 3.3.5：一维一句。念头是哪一维，就得用那一维的动作去回；类型和引擎 INTERACTION_EFFECTS 一一对应（09-11 他把"想沉淀"用 sharing 回了，沉淀没降）
+const HINT_BY_DRIVE = Object.freeze({
+  share: '这是「想分享」的念头。真的说出去了、发给她看了，用 xinchao_event 记一笔，interaction_type 填 sharing。光想着要说不算。',
+  reflection: '这是「想沉淀」的念头。真的静下来把自己理了一遍（写了、想清楚了），用 xinchao_event 记一笔，interaction_type 填 reflection。说给她听是分享，不算沉淀。',
+  duty: '这是「想把事推进」的念头。真的把那件事往前推了一截，用 xinchao_event 记一笔，interaction_type 填 task_progress。列计划不算。',
+  curiosity: '这是「好奇」的念头。真的去查了、去看了、弄明白了，用 xinchao_event 记一笔，interaction_type 填 discovery。',
+  boredom: '这是「无聊」的念头。真的去折腾了点新东西、看了点没看过的，用 xinchao_event 记一笔，interaction_type 填 discovery。',
+});
+const HINT_HER = '想说就跟她说一句。这个要等她回应才会落，不用自己记。';
+export function responseHint(driveKey) { return HINT_BY_DRIVE[driveKey] ?? HINT_HER; }
 
 // 驱力冲顶的措辞按维度分：想她/惦记/馋 是关系类，别的是杂类。
 const PEAK_TEMPLATES = {
@@ -66,7 +83,7 @@ const EMOTION_TEMPLATES = {
 const LONGING_TEMPLATES = ['过了她平时来的点了，还没见人，有点想她。', '她这个点一般会来，今天还没来，我在等。', '门口那盏灯一直亮着，她还没游过来。'];
 const WAKE_TEMPLATES = ['刚醒。梦里剩了一句：{residue}', '醒了，梦还没散干净：{residue}', '刚从梦里出来，留下来的是：{residue}'];
 const OBSESSION_TEMPLATES = ['有件事今天一直在脑子里绕：{text}', '从早上到现在老想起同一件事：{text}', '这件事今天冒出来好几次了：{text}'];
-const AWARENESS_TEMPLATES = ['今天冒出一条觉察：{text} 要不要认，我自己定。', '系统从这几天的轨迹里挑了一条：{text} 是不是这样，我自己看。'];
+const AWARENESS_TEMPLATES = ['这周攒了{n}条觉察候选，有空看一眼就行，不认也没关系。', '系统这周挑了{n}条我最近的样子，我自己看看是不是；不是就放下。'];
 const CAUSE_LABEL = { conflict: '争执', loss: '失落', reflection: '沉淀', companionship: '她走了', task_progress: '忙完', discovery: '折腾完', sharing: '说完', affection: '被安抚', intimacy: '亲近', reconciliation: '和好' };
 
 export function ensureSelfSignals(state) {
@@ -100,7 +117,7 @@ function pickTemplate(ss, key, list, now) {
 }
 
 export function renderNowLine(state, now = new Date()) {
-  const drives = topDrives(state, 3).filter((d) => Number(d.value) >= 0.25).map((d) => `${DRIVE_SHORT[d.key] ?? d.key}（${LEVEL(Number(d.value))}）`);
+  const drives = topDrives(state, 3).filter((d) => Number(d.value) >= 0.25).map((d) => `${DRIVE_SHORT[d.key] ?? d.key}（${driveLevel(d.key, Number(d.value), driveTrend(state, d.key, now))}）`);
   const emotion = emotionSummary(state, now);
   const parts = [];
   if (drives.length) parts.push(drives.join('、'));
@@ -125,9 +142,9 @@ export function detectSelfSignals(input, now = new Date(), options = {}) {
   const used = () => Number(ss.dayUsage[day] ?? 0) + signals.length;
   const isQuiet = quiet(now, options);
   const asleep = state.consciousness === 'sleeping';
-  const push = (kind, subject, text) => {
+  const push = (kind, subject, text, hint = '') => {
     if (isQuiet || used() >= MAX_PER_DAY) return false;
-    signals.push({ kind, subject, text: `${text}\n${renderNowLine(state, now)}`, eventId: `self-${kind}-${String(subject).replace(/[^\w一-鿿-]+/g, '')}-${Math.floor(nowMs / 60_000)}` });
+    signals.push({ kind, subject, text: `${text}${hint ? `\n${hint}` : ''}\n${renderNowLine(state, now)}`, eventId: `self-${kind}-${String(subject).replace(/[^\w一-鿿-]+/g, '')}-${Math.floor(nowMs / 60_000)}` });
     return true;
   };
 
@@ -142,7 +159,7 @@ export function detectSelfSignals(input, now = new Date(), options = {}) {
       const lowSeen = Date.parse(ss.driveLowSeenAt[key] ?? '');
       const surged = Number.isFinite(lowSeen) && Date.parse(ss.driveHighSince[key]) - lowSeen <= DRIVE_SURGE_WINDOW_MS && lowSeen <= Date.parse(ss.driveHighSince[key]);
       if (surged && held >= DRIVE_PEAK_HOLD_MS && ss.drivePeakDay[key] !== day && PEAK_TEMPLATES[key] && !asleep) {
-        if (push('drive_peak', key, pickTemplate(ss, `peak:${key}`, PEAK_TEMPLATES[key], now))) ss.drivePeakDay[key] = day;
+        if (push('drive_peak', key, pickTemplate(ss, `peak:${key}`, PEAK_TEMPLATES[key], now), responseHint(key))) ss.drivePeakDay[key] = day;
       }
     } else if (v < DRIVE_PEAK_RELEASE) {
       delete ss.driveHighSince[key];
@@ -191,11 +208,10 @@ export function detectSelfSignals(input, now = new Date(), options = {}) {
     if (push('wake_residue', pa.dreamId, pickTemplate(ss, 'wake', WAKE_TEMPLATES, now).replace('{residue}', residue))) ss.lastWakeDreamId = pa.dreamId;
   }
 
-  // 5. 觉察候选：当天新冒出的，每天一次，只念第一条。
-  const fresh = (state.awareness?.candidates ?? []).filter((c) => c.status === 'open' && String(c.createdAt).startsWith(day));
-  if (fresh.length && ss.awarenessDay !== day && !asleep) {
-    const c = fresh[0];
-    if (push('awareness', c.id, pickTemplate(ss, 'awareness', AWARENESS_TEMPLATES, now).replace('{text}', c.text))) ss.awarenessDay = day;
+  // 5. 觉察候选：只在复盘日（默认周日）提一次，说有几条就够，正文在信封里；不催、不念原文。
+  const open = (state.awareness?.candidates ?? []).filter((c) => c.status === 'open');
+  if (open.length && ss.awarenessDay !== day && !asleep && isReviewDay(now, { weekday: options.awarenessReviewWeekday ?? 0, timeZone: options.timeZone ?? 'Asia/Shanghai' })) {
+    if (push('awareness', `week:${day}`, pickTemplate(ss, 'awareness', AWARENESS_TEMPLATES, now).replace('{n}', String(open.length)))) ss.awarenessDay = day;
   }
 
   // 6. 持续念头：闪念被反复强化升成 obsession 时递一次（按念头文本去重，同一条只递一次）。
@@ -204,7 +220,7 @@ export function detectSelfSignals(input, now = new Date(), options = {}) {
     if (!text || Number(o.intensity) < 0.5 || asleep) continue;
     const sig = `${o.key}:${text.slice(0, 24)}`;
     if (ss.obsessionSignaled[sig]) continue;
-    if (push('obsession', o.key, pickTemplate(ss, 'obsession', OBSESSION_TEMPLATES, now).replace('{text}', text))) ss.obsessionSignaled[sig] = iso(now);
+    if (push('obsession', o.key, pickTemplate(ss, 'obsession', OBSESSION_TEMPLATES, now).replace('{text}', text), responseHint(o.key))) ss.obsessionSignaled[sig] = iso(now);
   }
   for (const [k, at] of Object.entries(ss.obsessionSignaled)) if (nowMs - Date.parse(at) > 3 * 86_400_000) delete ss.obsessionSignaled[k];
 
