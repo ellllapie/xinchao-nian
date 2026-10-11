@@ -596,6 +596,9 @@ function auditEventFingerprint(value) {
     : '';
 }
 
+const OB_SLOW_TOOLS = new Set(['hold', 'grow', 'dream', 'anchor', 'trace', 'release', 'forget']);
+const OB_WRITE_TIMEOUT_MS = Math.max(15000, Number(process.env.OB_WRITE_TIMEOUT_MS) || 90000);
+
 function authorized(request) {
   const supplied = request.headers.authorization?.replace(/^Bearer\s+/i, '') ?? '';
   return safeEqual(supplied, config.serviceToken);
@@ -1459,11 +1462,14 @@ const server = createServer(async (request, response) => {
           return ombre.listTools();
         },
         // 情绪 → 记忆：他经网关调 breath/hold 没自己给坐标时，替他带上此刻情绪（grow 不碰）。
+        // 写记忆的（hold/grow/dream/anchor/trace）在 OB 那边要跑模型打标签、算向量，常常超过 15 秒；
+        // 以前一律 15 秒就掐断，OB 那边跟着取消，所以「经心潮存 OB」一直失败。写的给 90 秒，读的照旧。
         callOb: async (name, args) => {
-          if (!config.ombre.emotionStamp) return ombre.call(name, args);
+          const ms = OB_SLOW_TOOLS.has(String(name)) ? OB_WRITE_TIMEOUT_MS : 15000;
+          if (!config.ombre.emotionStamp) return ombre.call(name, args, ms);
           const stamped = stampEmotionArgs(name, args, await store.read());
           if (stamped.stamped) log('ombre_emotion_stamped', { tool: String(name).slice(0, 40), ...stamped.coords });
-          return ombre.call(name, stamped.args);
+          return ombre.call(name, stamped.args, ms);
         },
       });
       if (payload?.method === 'initialize' || payload?.method === 'tools/call') {
