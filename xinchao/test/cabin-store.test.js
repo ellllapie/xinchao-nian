@@ -49,3 +49,18 @@ test('AI unread notes and love ledger totals are persisted and editable', async 
   await store.deleteLedger(expense.entry.id);
   assert.deepEqual((await store.snapshot()).totals, { expense: 0, income: 20, net: -20 });
 });
+
+test('deleteNotes removes only matching user notes', async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), 'cabin-del-'));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const store = new CabinStore(join(directory, 'cabin.json'));
+  await store.addNote({ from: 'user', eventId: 'evt-del-a', content: '去采草', timestamp: '2026-09-01T00:00:00Z' });
+  await store.addNote({ from: 'user', eventId: 'evt-del-b', content: '去睡觉', timestamp: '2026-10-10T00:00:00Z' });
+  await store.addNote({ from: 'user', eventId: 'evt-del-c', content: '开着的', locked: false, timestamp: '2026-09-01T00:00:00Z' });
+  await store.addNote({ from: 'ai', eventId: 'evt-del-d', content: '我写的', timestamp: '2026-09-01T00:00:00Z' });
+  const r = await store.deleteNotes({ lockedOnly: true, before: '2026-10-01T00:00:00Z' });
+  assert.equal(r.removed, 1);
+  const left = (await store.snapshot()).notes.map((n) => n.content).sort();
+  assert.deepEqual(left, ['去睡觉', '开着的', '我写的'].sort());
+  await assert.rejects(() => store.deleteNotes({}));
+});

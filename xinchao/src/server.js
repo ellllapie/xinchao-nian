@@ -1495,6 +1495,25 @@ const server = createServer(async (request, response) => {
       return payload ? send(response, 200, payload) : send(response, 404, { error: 'not found' });
     }
 
+    // 小屋的信：列出来 / 删掉（原版只能锁、开锁、标已读）。新家网页用这个整理旧便条
+    if (request.method === 'GET' && url.pathname === '/v1/cabin/notes') {
+      const snap = await cabin.snapshot();
+      return send(response, 200, { notes: snap.notes });
+    }
+    if (request.method === 'POST' && url.pathname === '/v1/cabin/notes/delete') {
+      try {
+        const payload = await body(request);
+        return send(response, 200, await cabin.deleteNotes({
+          ids: Array.isArray(payload.ids) ? payload.ids : null,
+          from: payload.from === undefined ? 'user' : payload.from,
+          lockedOnly: payload.lockedOnly === true || payload.locked_only === true,
+          before: payload.before ?? null,
+        }));
+      } catch (error) {
+        return send(response, 400, { error: error.message });
+      }
+    }
+
     if (request.method === 'GET' && url.pathname === '/v1/state') {
       return send(response, 200, await store.read());
     }

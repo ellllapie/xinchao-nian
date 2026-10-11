@@ -220,6 +220,27 @@ export class CabinStore {
     return result;
   }
 
+  // 删信（原版没有）：按 id 删，或者按条件批量删——只删她写的（from=user）、可以只删上锁的、可以只删某天以前的。
+  async deleteNotes({ ids = null, from = 'user', lockedOnly = false, before = null } = {}) {
+    const wanted = Array.isArray(ids) ? new Set(ids.map(String)) : null;
+    const cutoff = before ? Date.parse(before) : null;
+    if (!wanted && !lockedOnly && !Number.isFinite(cutoff)) throw new Error('give ids, or lockedOnly / before to delete in bulk');
+    const removed = [];
+    await this.store.update((raw) => {
+      const state = normalize(raw);
+      state.notes = state.notes.filter((note) => {
+        const hit = (wanted ? wanted.has(note.id) : true)
+          && (!from || note.from === from)
+          && (!lockedOnly || note.locked)
+          && (!Number.isFinite(cutoff) || Date.parse(note.createdAt) < cutoff);
+        if (hit) removed.push({ id: note.id, from: note.from, locked: note.locked, createdAt: note.createdAt });
+        return !hit;
+      });
+      return state;
+    });
+    return { removed: removed.length, notes: removed };
+  }
+
   async deleteLedger(id) {
     let result = null;
     await this.store.update((raw) => {
