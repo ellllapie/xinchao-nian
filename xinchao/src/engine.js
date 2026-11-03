@@ -332,7 +332,7 @@ function applyInteractionOutcome(state, type, now, options = {}) {
   if (type === 'conflict') {
     // 同一场架只记第一句惹气的话（09-28：后面被误判的"宝宝"不该顶掉真正的原因）
     const cause = String(options.cause ?? '').replace(/\s+/g, ' ').trim().slice(0, 60);
-    if (!state.grudge) state.grudge = { cause: cause || '刚才的争执', at: now.toISOString() };
+    if (!state.grudge && !options.autoJudged) state.grudge = { cause: cause || '刚才的争执', at: now.toISOString() };   // 11-03：自动判的不挂
     episode = state.conflictEpisode = episode
       ? { ...episode, conflicts: Number(episode.conflicts ?? 0) + 1, lastAt: iso(now) }
       : { startedAt: iso(now), lastAt: iso(now), conflicts: 1, soothes: 0, reconciled: false };
@@ -823,7 +823,7 @@ export function applyConversationEvent(input, event = {}, now = new Date(), opti
       reasonCode: 'missing_event_id',
       affectedDrives: [],
     }
-    : applyInteractionOutcome(state, type, now, { ...options, cause: event.cause, herWords: event.herWords ?? event.her_words, sub: event.sub, weight: event.weight, closeness: event.closeness, who: event.who, strength: event.strength, proof: event.proof, slip: event.slip });
+    : applyInteractionOutcome(state, type, now, { ...options, cause: event.cause, herWords: event.herWords ?? event.her_words, sub: event.sub, weight: event.weight, closeness: event.closeness, who: event.who, strength: event.strength, proof: event.proof, slip: event.slip, autoJudged: event.autoJudged === true });
 
   // 10-20：她明确说缓过来了（好多了、舒服多了…），为她心疼的那份难过直接降六成；不看分类、不占互动名额
   const herOk = herRecovered(event.herWords ?? event.her_words ?? '') ? relieveHerGrieve(state, now, { ratio: HER_RELIEF.recovered }) : null;

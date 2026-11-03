@@ -1004,10 +1004,9 @@ async function classifyExchange(event, source = 'api') {
     // 浮标点开看到的是她这句原话的前 40 字（网页开了私密文字才显示）
     if (MARK_TYPES.has(tag.type) && !event.note) event.note = her.slice(0, 40);
     event.sessionState = { ...(event.sessionState ?? event.session_state ?? {}), tone: tag.tone, warmth: tag.warmth, tension: tag.tension };
-    if (tag.type === 'conflict' && !event.cause) {
-      const her = exchange.match(/她说：(.+?)(?:\s*他回：|$)/);
-      if (her) event.cause = her[1].trim().slice(0, 60);
-    }
+    // 11-03（小克改）：服务端替他判出来的吵架不挂「还在气」。那天早上她吐槽一句，被判成吵架，她的话挂成了他的气好几个小时。
+    // 生气照样涨、照样退；只有他自己报 conflict（带 cause）才记在气什么。
+    if (tag.type === 'conflict') event.autoJudged = true;
     await updateState({ type: 'interaction_classified', source, details: { type: tag.type, tone: tag.tone }, at: new Date() },
       (current) => ({ ...current, interactionClassifyAt: new Date().toISOString() }));
     log('interaction_classified', { type: tag.type, tone: tag.tone, source, ...(tag.sub ? { sub: tag.sub } : {}), ...(tag.guarded ? { guarded: tag.guarded } : {}) });
