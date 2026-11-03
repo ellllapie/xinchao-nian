@@ -141,6 +141,10 @@ export const XINCHAO_TOOLS = [
             'reflection=完成沉淀，conflict=发生冲突，loss=经历失落，reconciliation=完成和解，slighted=没被偏爱（吃醋/被晾着/被忘），empathy=为别人的处境起了心（配 sub 心疼/不平/想帮忙/替人高兴 和 closeness），helped=为别人做了点什么（写信/回帖/出主意），intrigued=她说了半句、想知道后面（想了解她）。',
           ].join(''),
         },
+        grudge_gone: {
+          type: 'boolean',
+          description: '11-03：我自己觉得气消了，填 true，把「还在气」那一行划掉。只划这一行，不动别的驱力，也不算和好。',
+        },
         tone: {
           type: 'string',
           enum: ['neutral', 'calm', 'warm', 'guarded', 'conflicted', 'focused', 'playful', 'tired'],
@@ -550,6 +554,7 @@ function eventArgs(args = {}, fallbackSessionId = '') {
     sub: ['生气', '不满', '不甘心', '失落', '委屈', '分别', '吃醋', '被晾着', '被忘', '心疼', '不平', '想帮忙', '替人高兴', '自责', '想了解她', '害羞'].includes(args.sub) ? args.sub : undefined,   // 09-30 第 4 步细项；10-01/02 偏爱、共情
     closeness: ['her', 'family', 'known', 'stranger'].includes(args.closeness) ? args.closeness : undefined,
     who: String(args.who ?? '').replace(/\s+/g, ' ').trim().slice(0, 20) || undefined,
+    grudgeGone: args.grudge_gone === true,
   };
 }
 

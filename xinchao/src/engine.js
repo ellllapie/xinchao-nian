@@ -746,6 +746,7 @@ export function driveTrend(state, key, now = new Date()) {
 
 export function applyConversationEvent(input, event = {}, now = new Date(), options = {}) {
   const state = ensureStateShape(structuredClone(input));
+  if (event.grudgeGone === true) delete state.grudge;   // 11-03：他自己说气消了
   const eventId = cleanEventId(event);
   const type = interactionType(event);
   const sessionId = cleanSessionId(event);
