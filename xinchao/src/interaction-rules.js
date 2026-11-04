@@ -32,7 +32,7 @@ export const DEFAULT_RULES = Object.freeze({
 });
 
 const LEVELS = ['her', 'family', 'known', 'stranger'];
-const SUBS = { conflict: ['生气', '不满', '不甘心'], loss: ['失落', '委屈', '分别', '自责'], affection: ['害羞'], intimacy: ['害羞'], slighted: ['吃醋', '被晾着', '被忘'] };
+const SUBS = { conflict: ['生气', '不满', '不甘心'], loss: ['失落', '委屈', '分别', '自责'], affection: ['害羞'], intimacy: ['害羞'], slighted: ['被晾着', '被忘'] }; // 11-04：自动判不再判吃醋（她常带别家小机玩，那不是冷落）；我自己报还能报
 const EMPATHY_SUBS = ['心疼', '不平', '想帮忙', '替人高兴'];
 const words = (list) => new RegExp((list ?? []).map((w) => String(w)).filter(Boolean).join('|') || '(?!)');
 
